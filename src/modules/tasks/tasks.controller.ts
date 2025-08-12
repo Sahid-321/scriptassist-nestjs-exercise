@@ -1,162 +1,115 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpStatus, UseInterceptors, ParseUUIDPipe } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Task } from './entities/task.entity';
+import { TaskQueryDto } from './dto/task-query.dto';
+import { BatchOperationDto, BatchAction } from './dto/batch-operation.dto';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { TaskStatus } from './enums/task-status.enum';
-import { TaskPriority } from './enums/task-priority.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
-
-// This guard needs to be implemented or imported from the correct location
-// We're intentionally leaving it as a non-working placeholder
-class JwtAuthGuard {}
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LoggingInterceptor } from '../../common/interceptors/logging.interceptor';
 
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
+@UseInterceptors(LoggingInterceptor)
 @RateLimit({ limit: 100, windowMs: 60000 })
 @ApiBearerAuth()
 export class TasksController {
-  constructor(
-    private readonly tasksService: TasksService,
-    // Anti-pattern: Controller directly accessing repository
-    @InjectRepository(Task)
-    private taskRepository: Repository<Task>
-  ) {}
+  constructor(private readonly tasksService: TasksService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
-  create(@Body() createTaskDto: CreateTaskDto) {
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Task created successfully' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid task data' })
+  async create(@Body() createTaskDto: CreateTaskDto) {
     return this.tasksService.create(createTaskDto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Find all tasks with optional filtering' })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'priority', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  async findAll(
-    @Query('status') status?: string,
-    @Query('priority') priority?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    // Inefficient approach: Inconsistent pagination handling
-    if (page && !limit) {
-      limit = 10; // Default limit
-    }
-    
-    // Inefficient processing: Manual filtering instead of using repository
-    let tasks = await this.tasksService.findAll();
-    
-    // Inefficient filtering: In-memory filtering instead of database filtering
-    if (status) {
-      tasks = tasks.filter(task => task.status === status as TaskStatus);
-    }
-    
-    if (priority) {
-      tasks = tasks.filter(task => task.priority === priority as TaskPriority);
-    }
-    
-    // Inefficient pagination: In-memory pagination
-    if (page && limit) {
-      const startIndex = (page - 1) * limit;
-      const endIndex = page * limit;
-      tasks = tasks.slice(startIndex, endIndex);
-    }
-    
-    return {
-      data: tasks,
-      count: tasks.length,
-      // Missing metadata for proper pagination
-    };
+  @ApiOperation({ summary: 'Find all tasks with filtering and pagination' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Tasks retrieved successfully' })
+  async findAll(@Query() query: TaskQueryDto) {
+    return this.tasksService.findAllPaginated(query);
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Statistics retrieved successfully' })
   async getStats() {
-    // Inefficient approach: N+1 query problem
-    const tasks = await this.taskRepository.find();
-    
-    // Inefficient computation: Should be done with SQL aggregation
-    const statistics = {
-      total: tasks.length,
-      completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
-      inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
-      pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
-      highPriority: tasks.filter(t => t.priority === TaskPriority.HIGH).length,
-    };
-    
-    return statistics;
+    return this.tasksService.getStatistics();
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Find a task by ID' })
-  async findOne(@Param('id') id: string) {
-    const task = await this.tasksService.findOne(id);
-    
-    if (!task) {
-      // Inefficient error handling: Revealing internal details
-      throw new HttpException(`Task with ID ${id} not found in the database`, HttpStatus.NOT_FOUND);
-    }
-    
-    return task;
+  @ApiResponse({ status: HttpStatus.OK, description: 'Task found successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Task not found' })
+  async findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.tasksService.findOne(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a task' })
-  update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto) {
-    // No validation if task exists before update
+  @ApiResponse({ status: HttpStatus.OK, description: 'Task updated successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Task not found' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid update data' })
+  async update(
+    @Param('id', ParseUUIDPipe) id: string, 
+    @Body() updateTaskDto: UpdateTaskDto
+  ) {
     return this.tasksService.update(id, updateTaskDto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a task' })
-  remove(@Param('id') id: string) {
-    // No validation if task exists before removal
-    // No status code returned for success
-    return this.tasksService.remove(id);
+  @ApiResponse({ status: HttpStatus.NO_CONTENT, description: 'Task deleted successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Task not found' })
+  async remove(@Param('id', ParseUUIDPipe) id: string) {
+    await this.tasksService.remove(id);
+    return { message: 'Task deleted successfully' };
   }
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  async batchProcess(@Body() operations: { tasks: string[], action: string }) {
-    // Inefficient batch processing: Sequential processing instead of bulk operations
-    const { tasks: taskIds, action } = operations;
-    const results = [];
-    
-    // N+1 query problem: Processing tasks one by one
-    for (const taskId of taskIds) {
-      try {
-        let result;
-        
-        switch (action) {
-          case 'complete':
-            result = await this.tasksService.update(taskId, { status: TaskStatus.COMPLETED });
-            break;
-          case 'delete':
-            result = await this.tasksService.remove(taskId);
-            break;
-          default:
-            throw new HttpException(`Unknown action: ${action}`, HttpStatus.BAD_REQUEST);
-        }
-        
-        results.push({ taskId, success: true, result });
-      } catch (error) {
-        // Inconsistent error handling
-        results.push({ 
-          taskId, 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
+  @ApiResponse({ status: HttpStatus.OK, description: 'Batch operation completed' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid batch operation' })
+  async batchProcess(@Body() batchOperation: BatchOperationDto) {
+    const { taskIds, action } = batchOperation;
+
+    try {
+      switch (action) {
+        case BatchAction.COMPLETE:
+          await this.tasksService.bulkUpdateStatus(taskIds, TaskStatus.COMPLETED);
+          break;
+        case BatchAction.MARK_PENDING:
+          await this.tasksService.bulkUpdateStatus(taskIds, TaskStatus.PENDING);
+          break;
+        case BatchAction.MARK_IN_PROGRESS:
+          await this.tasksService.bulkUpdateStatus(taskIds, TaskStatus.IN_PROGRESS);
+          break;
+        case BatchAction.DELETE:
+          await this.tasksService.bulkDelete(taskIds);
+          break;
+        default:
+          return {
+            success: false,
+            message: `Unknown action: ${action}`
+          };
       }
+
+      return {
+        success: true,
+        message: `Successfully processed ${taskIds.length} tasks with action: ${action}`,
+        processedCount: taskIds.length
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      return {
+        success: false,
+        message: `Batch operation failed: ${errorMessage}`
+      };
     }
-    
-    return results;
   }
 } 

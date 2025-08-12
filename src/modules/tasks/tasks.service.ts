@@ -1,102 +1,243 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Injectable, NotFoundException, Logger, BadRequestException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { TaskQueryDto } from './dto/task-query.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
+import { TaskRepository } from './repositories/task.repository';
+import { PaginatedResponse } from '../../types/pagination.interface';
 
 @Injectable()
 export class TasksService {
+  private readonly logger = new Logger(TasksService.name);
+
   constructor(
-    @InjectRepository(Task)
-    private tasksRepository: Repository<Task>,
+    private readonly taskRepository: TaskRepository,
+    private readonly dataSource: DataSource,
     @InjectQueue('task-processing')
-    private taskQueue: Queue,
+    private readonly taskQueue: Queue,
   ) {}
 
   async create(createTaskDto: CreateTaskDto): Promise<Task> {
-    // Inefficient implementation: creates the task but doesn't use a single transaction
-    // for creating and adding to queue, potential for inconsistent state
-    const task = this.tasksRepository.create(createTaskDto);
-    const savedTask = await this.tasksRepository.save(task);
+    // Use transaction to ensure consistency
+    return this.dataSource.transaction(async (manager) => {
+      try {
+        const task = manager.create(Task, createTaskDto);
+        const savedTask = await manager.save(task);
 
-    // Add to queue without waiting for confirmation or handling errors
-    this.taskQueue.add('task-status-update', {
-      taskId: savedTask.id,
-      status: savedTask.status,
+        // Add to queue within transaction context for better error handling
+        await this.taskQueue.add('task-created', {
+          taskId: savedTask.id,
+          status: savedTask.status,
+          userId: savedTask.userId,
+        });
+
+        this.logger.log(`Task created: ${savedTask.id}`);
+        return savedTask;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        this.logger.error(`Failed to create task: ${errorMessage}`, errorStack);
+        throw new BadRequestException('Failed to create task');
+      }
     });
-
-    return savedTask;
   }
 
-  async findAll(): Promise<Task[]> {
-    // Inefficient implementation: retrieves all tasks without pagination
-    // and loads all relations, causing potential performance issues
-    return this.tasksRepository.find({
-      relations: ['user'],
-    });
+  async findAllPaginated(query: TaskQueryDto): Promise<PaginatedResponse<Task>> {
+    try {
+      return await this.taskRepository.findAllPaginated(query);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to fetch tasks: ${errorMessage}`, errorStack);
+      throw new BadRequestException('Failed to fetch tasks');
+    }
   }
 
   async findOne(id: string): Promise<Task> {
-    // Inefficient implementation: two separate database calls
-    const count = await this.tasksRepository.count({ where: { id } });
-
-    if (count === 0) {
+    const task = await this.taskRepository.findOneWithUser(id);
+    
+    if (!task) {
       throw new NotFoundException(`Task with ID ${id} not found`);
     }
 
-    return (await this.tasksRepository.findOne({
-      where: { id },
-      relations: ['user'],
-    })) as Task;
+    return task;
   }
 
   async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
-    // Inefficient implementation: multiple database calls
-    // and no transaction handling
-    const task = await this.findOne(id);
+    return this.dataSource.transaction(async (manager) => {
+      try {
+        const task = await this.taskRepository.findById(id);
+        
+        if (!task) {
+          throw new NotFoundException(`Task with ID ${id} not found`);
+        }
 
-    const originalStatus = task.status;
+        const originalStatus = task.status;
 
-    // Directly update each field individually
-    if (updateTaskDto.title) task.title = updateTaskDto.title;
-    if (updateTaskDto.description) task.description = updateTaskDto.description;
-    if (updateTaskDto.status) task.status = updateTaskDto.status;
-    if (updateTaskDto.priority) task.priority = updateTaskDto.priority;
-    if (updateTaskDto.dueDate) task.dueDate = updateTaskDto.dueDate;
+        // Merge updates
+        Object.assign(task, updateTaskDto);
+        task.updatedAt = new Date();
 
-    const updatedTask = await this.tasksRepository.save(task);
+        const updatedTask = await manager.save(task);
 
-    // Add to queue if status changed, but without proper error handling
-    if (originalStatus !== updatedTask.status) {
-      this.taskQueue.add('task-status-update', {
-        taskId: updatedTask.id,
-        status: updatedTask.status,
-      });
-    }
+        // Queue status change notification if status changed
+        if (originalStatus !== updatedTask.status) {
+          await this.taskQueue.add('task-status-updated', {
+            taskId: updatedTask.id,
+            oldStatus: originalStatus,
+            newStatus: updatedTask.status,
+            userId: updatedTask.userId,
+          });
+        }
 
-    return updatedTask;
+        this.logger.log(`Task updated: ${updatedTask.id}`);
+        return updatedTask;
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          throw error;
+        }
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        this.logger.error(`Failed to update task ${id}: ${errorMessage}`, errorStack);
+        throw new BadRequestException('Failed to update task');
+      }
+    });
   }
 
   async remove(id: string): Promise<void> {
-    // Inefficient implementation: two separate database calls
-    const task = await this.findOne(id);
-    await this.tasksRepository.remove(task);
+    return this.dataSource.transaction(async (manager) => {
+      try {
+        const task = await this.taskRepository.findById(id);
+        
+        if (!task) {
+          throw new NotFoundException(`Task with ID ${id} not found`);
+        }
+
+        await manager.remove(task);
+
+        // Queue cleanup notification
+        await this.taskQueue.add('task-deleted', {
+          taskId: id,
+          userId: task.userId,
+        });
+
+        this.logger.log(`Task deleted: ${id}`);
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          throw error;
+        }
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        this.logger.error(`Failed to delete task ${id}: ${errorMessage}`, errorStack);
+        throw new BadRequestException('Failed to delete task');
+      }
+    });
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
-    // Inefficient implementation: doesn't use proper repository patterns
-    const query = 'SELECT * FROM tasks WHERE status = $1';
-    return this.tasksRepository.query(query, [status]);
+    try {
+      const query = new TaskQueryDto();
+      query.status = status;
+      query.limit = 1000; // Set a reasonable limit
+      
+      const result = await this.taskRepository.findAllPaginated(query);
+      return result.data;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to fetch tasks by status ${status}: ${errorMessage}`, errorStack);
+      throw new BadRequestException('Failed to fetch tasks by status');
+    }
   }
 
-  async updateStatus(id: string, status: string): Promise<Task> {
-    // This method will be called by the task processor
-    const task = await this.findOne(id);
-    task.status = status as any;
-    return this.tasksRepository.save(task);
+  async updateStatus(id: string, status: TaskStatus): Promise<Task> {
+    return this.update(id, { status });
+  }
+
+  async getStatistics(): Promise<{
+    total: number;
+    completed: number;
+    inProgress: number;
+    pending: number;
+    highPriority: number;
+  }> {
+    try {
+      return await this.taskRepository.getTaskStatistics();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to get task statistics: ${errorMessage}`, errorStack);
+      throw new BadRequestException('Failed to get task statistics');
+    }
+  }
+
+  async bulkUpdateStatus(taskIds: string[], status: TaskStatus): Promise<void> {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    return this.dataSource.transaction(async () => {
+      try {
+        await this.taskRepository.bulkUpdateStatus(taskIds, status);
+
+        // Queue bulk status update notification
+        await this.taskQueue.add('tasks-bulk-updated', {
+          taskIds,
+          newStatus: status,
+          updatedAt: new Date(),
+        });
+
+        this.logger.log(`Bulk updated ${taskIds.length} tasks to status: ${status}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        this.logger.error(`Failed to bulk update tasks: ${errorMessage}`, errorStack);
+        throw new BadRequestException('Failed to bulk update tasks');
+      }
+    });
+  }
+
+  async bulkDelete(taskIds: string[]): Promise<void> {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    return this.dataSource.transaction(async () => {
+      try {
+        // Get tasks before deletion for audit purposes
+        const tasks = await this.taskRepository.findByIds(taskIds);
+        
+        await this.taskRepository.bulkDelete(taskIds);
+
+        // Queue bulk deletion notification
+        await this.taskQueue.add('tasks-bulk-deleted', {
+          taskIds,
+          userIds: tasks.map(task => task.userId),
+          deletedAt: new Date(),
+        });
+
+        this.logger.log(`Bulk deleted ${taskIds.length} tasks`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        this.logger.error(`Failed to bulk delete tasks: ${errorMessage}`, errorStack);
+        throw new BadRequestException('Failed to bulk delete tasks');
+      }
+    });
+  }
+
+  async findOverdueTasks(limit = 100): Promise<Task[]> {
+    try {
+      return await this.taskRepository.findOverdueTasks(limit);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Failed to fetch overdue tasks: ${errorMessage}`, errorStack);
+      throw new BadRequestException('Failed to fetch overdue tasks');
+    }
   }
 }
