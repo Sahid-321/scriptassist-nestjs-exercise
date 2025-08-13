@@ -25,6 +25,9 @@ import { RedisCacheService } from './common/services/redis-cache.service';
 import { CircuitBreakerService } from './common/services/circuit-breaker.service';
 import { SelfHealingService } from './common/services/self-healing.service';
 import { FaultIsolationService } from './common/services/fault-isolation.service';
+import { BackpressureService } from './common/services/backpressure.service';
+import { ResourceUtilizationService } from './common/services/resource-utilization.service';
+import { PredictablePerformanceService } from './common/services/predictable-performance.service';
 
 @Module({
   imports: [
@@ -125,6 +128,9 @@ import { FaultIsolationService } from './common/services/fault-isolation.service
     CircuitBreakerService,
     SelfHealingService,
     FaultIsolationService,
+    BackpressureService,
+    ResourceUtilizationService,
+    PredictablePerformanceService,
     // Global security pipes and filters
     {
       provide: APP_PIPE,
