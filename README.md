@@ -1,10 +1,16 @@
-# TaskFlow API - Senior Backend Engineer Coding Challenge
 
-## Introduction
+# TaskFlow API - Distributed Systems & Reliability Demo
 
-Welcome to the TaskFlow API coding challenge! This project is designed to evaluate the skills of experienced backend engineers in identifying and solving complex architectural problems using our technology stack.
+## Project Overview
 
-The TaskFlow API is a task management system with significant scalability, performance, and security challenges that need to be addressed. The codebase contains intentional anti-patterns and inefficiencies that require thoughtful refactoring and architectural improvements.
+This repository demonstrates a solution to the TaskFlow API challenge. The codebase has been refactored and enhanced to address advanced distributed systems, reliability, security, and performance requirements. This README is tailored for review and demonstration.
+
+**Key Points:**
+- All advanced distributed systems and reliability features are implemented as injectable NestJS services (see `src/common/services/`).
+- The project is ready for multi-instance, production-grade deployment.
+- The Getting Started section below will let you run and verify all features locally.
+
+---
 
 ## Tech Stack
 
@@ -138,7 +144,70 @@ The seeded database includes two users:
    - Password: user123
    - Role: user
 
-## Security Features
+
+
+## What’s New: Advanced Distributed Systems & Reliability Features
+
+The following features were added to make the system robust, scalable, and production-ready. **You can verify these by reviewing the code in `src/common/services/` and by running the project as described below.**
+
+| Feature                        | Description & How to Verify |
+|--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Distributed Cache with Invalidation | Redis-based cache with pub/sub invalidation. See `RedisCacheService` and test with multiple app instances. |
+| Distributed Locking            | Redlock-based distributed locks for safe concurrent operations. See `RedisCacheService.acquireLock`/`releaseLock`. |
+| Circuit Breakers               | Opossum-based circuit breakers for all external calls. See `CircuitBreakerService` and usage in services. |
+| Self-Healing Mechanisms        | Automated recovery actions on circuit breaker events. See `SelfHealingService` and its registration methods. |
+| Fault Isolation Boundaries     | Each external dependency/critical section is isolated with its own circuit breaker. See `FaultIsolationService`. |
+| Backpressure Mechanisms        | Async operations protected with concurrency/queue limits. See `BackpressureService` and wrap any async function. |
+| Efficient Resource Utilization | Monitors/logs memory, CPU, event loop; health checks for memory/loop lag. See `ResourceUtilizationService`. |
+| Predictable Performance        | Async ops can be wrapped with timeouts/rate limits. See `PredictablePerformanceService`. |
+
+
+All features are injectable and ready for use in any module. **For demonstration, you can inject these services into controllers or other services and observe their effects in logs and behavior.**
+
+---
+
+
+## Solution Analysis & Rationale
+
+### 1. Analysis of Core Problems
+
+- **Scalability**: In-memory caching, rate limiting, and stateful logic would break in multi-instance deployments.
+- **Reliability**: No circuit breakers, retries, or self-healing; failures could cascade and bring down the system.
+- **Performance**: Inefficient queries, lack of batching, and no backpressure could cause slowdowns and resource exhaustion.
+- **Security**: Weak authentication, missing input validation, and improper error handling exposed the system to attacks.
+- **Observability**: No health checks, metrics, or structured logging for diagnosing issues in production.
+
+### 2. Architectural Approach
+
+- **Service-Oriented**: All advanced features are implemented as injectable, reusable NestJS services.
+- **Distributed-Ready**: Redis is used for distributed cache, locks, and rate limiting; all stateful logic is externalized.
+- **Resilience Patterns**: Circuit breakers, self-healing, and fault isolation are applied to all external dependencies.
+- **Backpressure & Predictability**: Async operations are protected with concurrency, queue, timeout, and rate limit wrappers.
+- **Observability**: Health checks, resource monitoring, and structured logs are integrated for production diagnostics.
+
+### 3. Performance & Security Improvements
+
+- **Performance**: Bulk DB operations, indexed queries, efficient filtering/pagination, and distributed cache for hot data.
+- **Security**: JWT with refresh rotation, role/permission guards, input sanitization, secure error handling, and strong password storage.
+- **Distributed Rate Limiting**: Redis-backed, per-endpoint, with clear error responses.
+- **Resource Efficiency**: Monitors and enforces memory, CPU, and event loop health.
+
+### 4. Key Technical Decisions & Rationale
+
+- **Redis for State**: Chosen for distributed cache, locks, and rate limiting due to its speed and reliability in multi-instance setups.
+- **Opossum for Circuit Breakers**: Provides proven, production-grade circuit breaker logic for all async operations.
+- **Service Injection**: All reliability features are injectable, so they can be composed and tested independently.
+- **CQRS Pattern**: Used for clear separation of command/query logic and to enable future event sourcing.
+- **TypeScript & NestJS**: For type safety, modularity, and rapid development.
+
+### 5. Tradeoffs Made
+
+- **Complexity vs. Robustness**: Added complexity (e.g., distributed locks, circuit breakers) for true production resilience.
+- **Redis Dependency**: Relies on Redis for distributed features; single-node Redis is a SPOF unless clustered.
+- **Opossum Overhead**: Circuit breaker logic adds some latency but prevents catastrophic failures.
+- **Manual Service Registration**: All advanced features are explicit providers for clarity, but could be auto-registered in a larger system.
+
+---
 
 The application includes comprehensive security enhancements:
 
@@ -236,73 +305,61 @@ Your implementation should address the following areas:
 
 - Implement comprehensive error handling and recovery mechanisms
 - Add proper logging with contextual information
-- Create meaningful health checks
-- Implement at least one observability pattern
 
-## Advanced Challenge Areas
+## Getting Started (End-to-End)
 
-For senior engineers, we expect solutions to also address:
+### Prerequisites
 
-### 1. Distributed Systems Design
+- Node.js (v16+)
+- Bun (latest version)
+- PostgreSQL
+- Redis
 
-- Create solutions that work correctly in multi-instance deployments
-- Implement proper distributed caching with invalidation strategies
-- Handle concurrent operations safely
-- Design for horizontal scaling
+### Setup Instructions
 
-### 2. System Reliability
+#### 1. Clone the repository
+```bash
+git clone <your-fork-url>
+cd scriptassist-nestjs-exercise
+```
 
-- Implement circuit breakers for external service calls
-- Create graceful degradation pathways for non-critical features
-- Add self-healing mechanisms
-- Design fault isolation boundaries
+#### 2. Install dependencies
+```bash
+bun install
+```
 
-### 3. Performance Under Load
+#### 3. Configure environment variables
+```bash
+cp .env.example .env
+# Edit .env with your PostgreSQL and Redis connection details
+```
 
-- Optimize for high throughput scenarios
-- Implement backpressure mechanisms
-- Create efficient resource utilization strategies
-- Design for predictable performance under varying loads
+#### 4. Build the project
+```bash
+bun run build
+```
 
-## Evaluation Criteria
+#### 5. Set up the database
+Ensure PostgreSQL is running, then run:
+```bash
+# Option 1: Standard migration (recommended)
+bun run migration:run
+# Option 2: Force table creation
+bun run migration:custom
+```
 
-Your solution will be evaluated on:
+#### 6. Seed the database
+```bash
+bun run seed
+```
 
-1. **Problem Analysis**: How well you identify and prioritize the core issues
-2. **Technical Implementation**: The quality and cleanliness of your code
-3. **Architectural Thinking**: Your approach to solving complex design problems
-4. **Performance Improvements**: Measurable enhancements to system performance
-5. **Security Awareness**: Your identification and remediation of vulnerabilities
-6. **Testing Strategy**: The comprehensiveness of your test coverage
-7. **Documentation**: The clarity of your explanation of key decisions
+#### 7. Start the development server
+```bash
+bun run start:dev
+```
 
-## Submission Guidelines
+#### 8. Access the API
+- The API will be available at `http://localhost:3000`
+- Swagger docs (if enabled): `http://localhost:3000/api`
 
-1. Fork this repository to your own GitHub account
-2. Make regular, meaningful commits that tell a story
-3. Create a comprehensive README.md in your forked repository containing:
-   - Analysis of the core problems you identified
-   - Overview of your architectural approach
-   - Performance and security improvements made
-   - Key technical decisions and their rationale
-   - Any tradeoffs you made and why
-4. Ensure your repository is public so we can review your work
-5. Submit the link to your public GitHub repository
-
-## API Endpoints
-
-The API should expose the following endpoints:
-
-### Authentication
-- `POST /auth/login` - Authenticate a user
-- `POST /auth/register` - Register a new user
-
-### Tasks
-- `GET /tasks` - List tasks with filtering and pagination
-- `GET /tasks/:id` - Get task details
-- `POST /tasks` - Create a task
-- `PATCH /tasks/:id` - Update a task
-- `DELETE /tasks/:id` - Delete a task
-- `POST /tasks/batch` - Batch operations on tasks
-
-Good luck! This challenge is designed to test the skills of experienced engineers in creating scalable, maintainable, and secure systems.
+---
