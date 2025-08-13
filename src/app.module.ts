@@ -22,6 +22,9 @@ import jwtConfig from './config/jwt.config';
 import bullConfig from './config/bull.config';
 import { CacheService } from './common/services/cache.service';
 import { RedisCacheService } from './common/services/redis-cache.service';
+import { CircuitBreakerService } from './common/services/circuit-breaker.service';
+import { SelfHealingService } from './common/services/self-healing.service';
+import { FaultIsolationService } from './common/services/fault-isolation.service';
 
 @Module({
   imports: [
@@ -119,6 +122,9 @@ import { RedisCacheService } from './common/services/redis-cache.service';
       useClass: RedisCacheService,
     },
     RedisCacheService,
+    CircuitBreakerService,
+    SelfHealingService,
+    FaultIsolationService,
     // Global security pipes and filters
     {
       provide: APP_PIPE,
