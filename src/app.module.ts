@@ -11,6 +11,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { SecurityModule } from './common/security.module';
+import { ResilienceModule } from './common/resilience.module';
 import { CqrsModule } from './common/cqrs.module';
 import { EnhancedRateLimitGuard } from './common/guards/enhanced-rate-limit.guard';
 import { EnhancedValidationPipe } from './common/pipes/enhanced-validation.pipe';
@@ -93,6 +94,9 @@ import bullConfig from './config/bull.config';
     
     // Security infrastructure
     SecurityModule,
+    
+    // Resilience and observability infrastructure
+    ResilienceModule,
     
     // CQRS Infrastructure
     CqrsModule,
