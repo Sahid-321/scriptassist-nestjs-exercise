@@ -1,161 +1,89 @@
-import { Injectable, NotFoundException, Logger, BadRequestException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
-import { Task } from './entities/task.entity';
+import { Injectable, Logger } from '@nestjs/common';
+import { TaskDomainService } from './application/task-domain.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
+import { TaskStatus } from './enums/task-status.enum';
+import { Task } from './entities/task.entity';
+import { PaginatedResponse } from '../../types/pagination.interface';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { TaskStatus } from './enums/task-status.enum';
-import { TaskRepository } from './repositories/task.repository';
-import { PaginatedResponse } from '../../types/pagination.interface';
 
 @Injectable()
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
 
   constructor(
-    private readonly taskRepository: TaskRepository,
-    private readonly dataSource: DataSource,
+    private readonly taskDomainService: TaskDomainService,
     @InjectQueue('task-processing')
     private readonly taskQueue: Queue,
   ) {}
 
-  async create(createTaskDto: CreateTaskDto): Promise<Task> {
-    // Use transaction to ensure consistency
-    return this.dataSource.transaction(async (manager) => {
-      try {
-        const task = manager.create(Task, createTaskDto);
-        const savedTask = await manager.save(task);
-
-        // Add to queue within transaction context for better error handling
-        await this.taskQueue.add('task-created', {
-          taskId: savedTask.id,
-          status: savedTask.status,
-          userId: savedTask.userId,
-        });
-
-        this.logger.log(`Task created: ${savedTask.id}`);
-        return savedTask;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : undefined;
-        this.logger.error(`Failed to create task: ${errorMessage}`, errorStack);
-        throw new BadRequestException('Failed to create task');
-      }
-    });
-  }
-
-  async findAllPaginated(query: TaskQueryDto): Promise<PaginatedResponse<Task>> {
-    try {
-      return await this.taskRepository.findAllPaginated(query);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to fetch tasks: ${errorMessage}`, errorStack);
-      throw new BadRequestException('Failed to fetch tasks');
+  async create(createTaskDto: CreateTaskDto, userId?: string): Promise<Task> {
+    const actualUserId = userId || createTaskDto.userId;
+    if (!actualUserId) {
+      throw new Error('User ID is required');
     }
-  }
 
-  async findOne(id: string): Promise<Task> {
-    const task = await this.taskRepository.findOneWithUser(id);
+    const task = await this.taskDomainService.createTask(actualUserId, createTaskDto);
     
-    if (!task) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
-    }
+    // Add to queue for background processing
+    await this.taskQueue.add('task-created', {
+      taskId: task.id,
+      status: task.status,
+      userId: task.userId,
+    });
 
+    this.logger.log(`Task created: ${task.id}`);
     return task;
   }
 
-  async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
-    return this.dataSource.transaction(async (manager) => {
-      try {
-        const task = await this.taskRepository.findById(id);
-        
-        if (!task) {
-          throw new NotFoundException(`Task with ID ${id} not found`);
-        }
-
-        const originalStatus = task.status;
-
-        // Merge updates
-        Object.assign(task, updateTaskDto);
-        task.updatedAt = new Date();
-
-        const updatedTask = await manager.save(task);
-
-        // Queue status change notification if status changed
-        if (originalStatus !== updatedTask.status) {
-          await this.taskQueue.add('task-status-updated', {
-            taskId: updatedTask.id,
-            oldStatus: originalStatus,
-            newStatus: updatedTask.status,
-            userId: updatedTask.userId,
-          });
-        }
-
-        this.logger.log(`Task updated: ${updatedTask.id}`);
-        return updatedTask;
-      } catch (error) {
-        if (error instanceof NotFoundException) {
-          throw error;
-        }
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : undefined;
-        this.logger.error(`Failed to update task ${id}: ${errorMessage}`, errorStack);
-        throw new BadRequestException('Failed to update task');
-      }
-    });
+  async findAllPaginated(query: TaskQueryDto): Promise<PaginatedResponse<Task>> {
+    return this.taskDomainService.getTasks(query);
   }
 
-  async remove(id: string): Promise<void> {
-    return this.dataSource.transaction(async (manager) => {
-      try {
-        const task = await this.taskRepository.findById(id);
-        
-        if (!task) {
-          throw new NotFoundException(`Task with ID ${id} not found`);
-        }
+  async findOne(id: string): Promise<Task> {
+    return this.taskDomainService.getTaskById(id);
+  }
 
-        await manager.remove(task);
+  async update(id: string, updateTaskDto: UpdateTaskDto, userId?: string): Promise<Task> {
+    if (!userId) {
+      throw new Error('User ID is required for task updates');
+    }
 
-        // Queue cleanup notification
-        await this.taskQueue.add('task-deleted', {
-          taskId: id,
-          userId: task.userId,
-        });
+    const task = await this.taskDomainService.updateTask(id, userId, updateTaskDto);
+    
+    this.logger.log(`Task updated: ${task.id}`);
+    return task;
+  }
 
-        this.logger.log(`Task deleted: ${id}`);
-      } catch (error) {
-        if (error instanceof NotFoundException) {
-          throw error;
-        }
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : undefined;
-        this.logger.error(`Failed to delete task ${id}: ${errorMessage}`, errorStack);
-        throw new BadRequestException('Failed to delete task');
-      }
+  async remove(id: string, userId?: string): Promise<void> {
+    if (!userId) {
+      throw new Error('User ID is required for task deletion');
+    }
+
+    await this.taskDomainService.deleteTask(id, userId);
+    
+    // Queue cleanup notification
+    await this.taskQueue.add('task-deleted', {
+      taskId: id,
+      userId,
     });
+
+    this.logger.log(`Task deleted: ${id}`);
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
-    try {
-      const query = new TaskQueryDto();
-      query.status = status;
-      query.limit = 1000; // Set a reasonable limit
-      
-      const result = await this.taskRepository.findAllPaginated(query);
-      return result.data;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to fetch tasks by status ${status}: ${errorMessage}`, errorStack);
-      throw new BadRequestException('Failed to fetch tasks by status');
-    }
+    const query = new TaskQueryDto();
+    query.status = status;
+    query.limit = 1000;
+    
+    const result = await this.taskDomainService.getTasks(query);
+    return result.data;
   }
 
-  async updateStatus(id: string, status: TaskStatus): Promise<Task> {
-    return this.update(id, { status });
+  async updateStatus(id: string, status: TaskStatus, userId: string): Promise<Task> {
+    return this.taskDomainService.changeTaskStatus(id, status, userId);
   }
 
   async getStatistics(): Promise<{
@@ -165,79 +93,64 @@ export class TasksService {
     pending: number;
     highPriority: number;
   }> {
-    try {
-      return await this.taskRepository.getTaskStatistics();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to get task statistics: ${errorMessage}`, errorStack);
-      throw new BadRequestException('Failed to get task statistics');
-    }
+    return this.taskDomainService.getTaskStatistics();
   }
 
-  async bulkUpdateStatus(taskIds: string[], status: TaskStatus): Promise<void> {
+  async bulkUpdateStatus(taskIds: string[], status: TaskStatus, userId?: string): Promise<void> {
+    if (!userId) {
+      throw new Error('User ID is required for bulk operations');
+    }
+
     if (taskIds.length === 0) {
       return;
     }
 
-    return this.dataSource.transaction(async () => {
-      try {
-        await this.taskRepository.bulkUpdateStatus(taskIds, status);
+    await this.taskDomainService.bulkUpdateTasks(taskIds, { status }, userId);
 
-        // Queue bulk status update notification
-        await this.taskQueue.add('tasks-bulk-updated', {
-          taskIds,
-          newStatus: status,
-          updatedAt: new Date(),
-        });
-
-        this.logger.log(`Bulk updated ${taskIds.length} tasks to status: ${status}`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : undefined;
-        this.logger.error(`Failed to bulk update tasks: ${errorMessage}`, errorStack);
-        throw new BadRequestException('Failed to bulk update tasks');
-      }
+    // Queue bulk status update notification
+    await this.taskQueue.add('tasks-bulk-updated', {
+      taskIds,
+      newStatus: status,
+      updatedAt: new Date(),
     });
+
+    this.logger.log(`Bulk updated ${taskIds.length} tasks to status: ${status}`);
   }
 
-  async bulkDelete(taskIds: string[]): Promise<void> {
+  async bulkDelete(taskIds: string[], userId?: string): Promise<void> {
+    if (!userId) {
+      throw new Error('User ID is required for bulk operations');
+    }
+
     if (taskIds.length === 0) {
       return;
     }
 
-    return this.dataSource.transaction(async () => {
-      try {
-        // Get tasks before deletion for audit purposes
-        const tasks = await this.taskRepository.findByIds(taskIds);
-        
-        await this.taskRepository.bulkDelete(taskIds);
+    // Use individual delete commands for proper authorization
+    const deletePromises = taskIds.map(taskId => 
+      this.taskDomainService.deleteTask(taskId, userId)
+    );
+    await Promise.all(deletePromises);
 
-        // Queue bulk deletion notification
-        await this.taskQueue.add('tasks-bulk-deleted', {
-          taskIds,
-          userIds: tasks.map(task => task.userId),
-          deletedAt: new Date(),
-        });
-
-        this.logger.log(`Bulk deleted ${taskIds.length} tasks`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorStack = error instanceof Error ? error.stack : undefined;
-        this.logger.error(`Failed to bulk delete tasks: ${errorMessage}`, errorStack);
-        throw new BadRequestException('Failed to bulk delete tasks');
-      }
+    // Queue bulk deletion notification
+    await this.taskQueue.add('tasks-bulk-deleted', {
+      taskIds,
+      userIds: [userId],
+      deletedAt: new Date(),
     });
+
+    this.logger.log(`Bulk deleted ${taskIds.length} tasks`);
   }
 
   async findOverdueTasks(limit = 100): Promise<Task[]> {
-    try {
-      return await this.taskRepository.findOverdueTasks(limit);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Failed to fetch overdue tasks: ${errorMessage}`, errorStack);
-      throw new BadRequestException('Failed to fetch overdue tasks');
-    }
+    return this.taskDomainService.getOverdueTasks(limit);
+  }
+
+  async assignTask(taskId: string, assignToUserId: string, assignedByUserId: string): Promise<Task> {
+    return this.taskDomainService.assignTask(taskId, assignToUserId, assignedByUserId);
+  }
+
+  async getTasksByUser(userId: string, filters?: Partial<TaskQueryDto>): Promise<PaginatedResponse<Task>> {
+    return this.taskDomainService.getTasksByUser(userId, filters);
   }
 }

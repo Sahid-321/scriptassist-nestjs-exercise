@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { CacheService } from './common/services/cache.service';
+import { CqrsModule } from './common/cqrs.module';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
@@ -67,6 +68,9 @@ import bullConfig from './config/bull.config';
       ]),
     }),
     
+    // CQRS Infrastructure
+    CqrsModule,
+    
     // Feature modules
     UsersModule,
     TasksModule,
@@ -77,13 +81,10 @@ import bullConfig from './config/bull.config';
     ScheduledTasksModule,
   ],
   providers: [
-    // Inefficient: Global cache service with no configuration options
-    // This creates a single in-memory cache instance shared across all modules
+    // Cache service now properly decoupled
     CacheService
   ],
   exports: [
-    // Exporting the cache service makes it available to other modules
-    // but creates tight coupling
     CacheService
   ]
 })

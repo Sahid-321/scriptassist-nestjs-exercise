@@ -38,7 +38,7 @@ export class TaskProcessorService extends WorkerHost {
   }
 
   private async handleStatusUpdate(job: Job) {
-    const { taskId, status } = job.data;
+    const { taskId, status, userId } = job.data;
     
     if (!taskId || !status) {
       return { success: false, error: 'Missing required data' };
@@ -47,7 +47,7 @@ export class TaskProcessorService extends WorkerHost {
     // Inefficient: No validation of status values
     // No transaction handling
     // No retry mechanism
-    const task = await this.tasksService.updateStatus(taskId, status);
+    const task = await this.tasksService.updateStatus(taskId, status, userId);
     
     return { 
       success: true,
