@@ -4,6 +4,7 @@ import { HealthService } from './services/health.service';
 import { ResilienceService } from './services/resilience.service';
 import { HealthController } from './controllers/health.controller';
 import { CacheService } from './services/cache.service';
+import { RedisCacheService } from './services/redis-cache.service';
 
 @Global()
 @Module({
@@ -11,12 +12,17 @@ import { CacheService } from './services/cache.service';
   providers: [
     HealthService,
     ResilienceService,
-    CacheService,
+    {
+      provide: CacheService,
+      useClass: RedisCacheService,
+    },
+    RedisCacheService,
   ],
   exports: [
     HealthService,
     ResilienceService,
     CacheService,
+    RedisCacheService,
   ],
 })
 export class ResilienceModule {}

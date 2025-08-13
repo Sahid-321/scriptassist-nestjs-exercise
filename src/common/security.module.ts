@@ -1,15 +1,16 @@
 import { Module, Global } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CacheService } from './services/cache.service';
+// import { CacheService } from './services/cache.service';
 import { EnhancedRateLimitGuard } from './guards/enhanced-rate-limit.guard';
 import { EnhancedAuthorizationGuard } from './guards/enhanced-authorization.guard';
 import { EnhancedValidationPipe } from './pipes/enhanced-validation.pipe';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
+import { RedisCacheService } from './services/redis-cache.service';
 
 @Global()
 @Module({
   providers: [
-    CacheService,
+    RedisCacheService,
     ConfigService,
     EnhancedRateLimitGuard,
     EnhancedAuthorizationGuard,
@@ -17,7 +18,7 @@ import { HttpExceptionFilter } from './filters/http-exception.filter';
     HttpExceptionFilter,
   ],
   exports: [
-    CacheService,
+    RedisCacheService,
     EnhancedRateLimitGuard,
     EnhancedAuthorizationGuard,
     EnhancedValidationPipe,

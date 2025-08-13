@@ -20,6 +20,8 @@ import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import bullConfig from './config/bull.config';
+import { CacheService } from './common/services/cache.service';
+import { RedisCacheService } from './common/services/redis-cache.service';
 
 @Module({
   imports: [
@@ -111,6 +113,12 @@ import bullConfig from './config/bull.config';
     ScheduledTasksModule,
   ],
   providers: [
+    // Distributed cache provider for multi-instance/horizontally scaled deployments
+    {
+      provide: CacheService,
+      useClass: RedisCacheService,
+    },
+    RedisCacheService,
     // Global security pipes and filters
     {
       provide: APP_PIPE,
