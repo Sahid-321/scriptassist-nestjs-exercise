@@ -27,6 +27,25 @@ The TaskFlow API is a task management system with significant scalability, perfo
 
 ### Setup Instructions
 
+**Quick Setup (Recommended)**
+
+For a fully automated setup, run our setup script:
+```bash
+./setup.sh
+```
+
+This script will:
+- Check all prerequisites
+- Install dependencies
+- Set up environment variables
+- Create and migrate the database
+- Seed initial data
+- Verify the installation
+
+**Manual Setup**
+
+If you prefer manual setup or need to troubleshoot:
+
 1. Clone this repository
 2. Install dependencies:
    ```bash
@@ -57,17 +76,19 @@ The TaskFlow API is a task management system with significant scalability, perfo
 
 5. Run database migrations:
    ```bash
-   # Option 1: Standard migration (if "No migrations are pending" but tables aren't created)
+   # Option 1: Standard migration (recommended)
    bun run migration:run
    
    # Option 2: Force table creation with our custom script
    bun run migration:custom
    ```
    
-   Our custom migration script will:
-   - Try to run formal migrations first
-   - If no migrations are executed, it will directly create the necessary tables
-   - It provides detailed logging to help troubleshoot database setup issues
+   Our migration system will automatically:
+   - Create all necessary tables (users, tasks, refresh_tokens)
+   - Set up proper indexes for performance
+   - Create foreign key relationships
+   - Add security-related columns and constraints
+   - Handle both fresh installations and existing databases
 
 6. Seed the database with initial data:
    ```bash
@@ -116,6 +137,39 @@ The seeded database includes two users:
    - Email: user@example.com
    - Password: user123
    - Role: user
+
+## Security Features
+
+The application includes comprehensive security enhancements:
+
+### Enhanced Authentication
+- **JWT with Refresh Token Rotation**: Short-lived access tokens (15 minutes) with secure refresh token rotation
+- **IP Address Tracking**: Monitors login locations for security breach detection
+- **User Agent Validation**: Tracks device/browser information for additional security
+- **Security Breach Detection**: Automatically detects suspicious login patterns
+
+### Rate Limiting
+- **Redis-based Distributed Rate Limiting**: Configurable rate limits per endpoint
+- **Different Limits per Endpoint**: Login (5/min), Refresh (10/min), General API (100/min)
+- **IP-based Tracking**: Privacy-compliant hashed IP storage
+- **Proper Error Responses**: Clear rate limit headers and retry information
+
+### Authorization & Permissions
+- **Role-based Access Control**: Admin, Manager, and User roles with different permissions
+- **Permission-based Endpoints**: Fine-grained access control per route
+- **Multi-level Authorization**: Guards at both route and method level
+
+### Data Protection
+- **Input Sanitization**: XSS and SQL injection prevention
+- **Secure Error Handling**: No sensitive data leakage in error responses
+- **Security Headers**: CORS, CSP, and other security headers automatically applied
+- **Data Validation**: Comprehensive input validation with sanitization
+
+### Database Security
+- **Secure Password Storage**: bcrypt hashing with proper salt rounds
+- **Refresh Token Management**: Secure token storage with automatic cleanup
+- **Foreign Key Constraints**: Proper data integrity and cascade deletion
+- **Indexed Queries**: Optimized database queries for performance and security
 
 ## Challenge Overview
 

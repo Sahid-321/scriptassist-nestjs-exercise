@@ -23,6 +23,9 @@ export class User {
   @OneToMany(() => Task, (task) => task.user)
   tasks: Task[];
 
+  @OneToMany('RefreshToken', 'user')
+  refreshTokens: any[];
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

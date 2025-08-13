@@ -9,6 +9,10 @@ async function runMigrations() {
     await dataSource.initialize();
     console.log('Database connection initialized successfully.');
     
+    // Ensure UUID extension is available
+    await dataSource.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+    console.log('UUID extension ensured.');
+    
     // Log pending migrations
     const pendingMigrations = await dataSource.showMigrations();
     console.log(`Pending migrations: ${pendingMigrations ? 'Yes' : 'No'}`);
@@ -23,7 +27,7 @@ async function runMigrations() {
     if (migrations.length === 0) {
       console.log('No migrations were executed. Creating tables directly...');
       
-      // Option to force table creation if no migrations ran
+      // Create users table
       console.log('Creating users table...');
       await dataSource.query(`
         CREATE TABLE IF NOT EXISTS "users" (
@@ -37,6 +41,7 @@ async function runMigrations() {
         )
       `);
       
+      // Create tasks table
       console.log('Creating tasks table...');
       await dataSource.query(`
         CREATE TABLE IF NOT EXISTS "tasks" (
@@ -53,10 +58,40 @@ async function runMigrations() {
         )
       `);
       
-      console.log('Tables created successfully.');
+      // Create refresh_tokens table
+      console.log('Creating refresh_tokens table...');
+      await dataSource.query(`
+        CREATE TABLE IF NOT EXISTS "refresh_tokens" (
+          "id" uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+          "token" text NOT NULL,
+          "expiresAt" TIMESTAMP NOT NULL,
+          "isRevoked" boolean NOT NULL DEFAULT false,
+          "ipAddress" varchar(64),
+          "userAgent" text,
+          "replacedByToken" uuid,
+          "revokedReason" varchar(100),
+          "revokedAt" TIMESTAMP,
+          "userId" uuid NOT NULL,
+          "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "FK_refresh_tokens_user_id" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE
+        )
+      `);
+      
+      // Create indexes for refresh_tokens
+      console.log('Creating refresh_tokens indexes...');
+      await dataSource.query(`CREATE UNIQUE INDEX IF NOT EXISTS "IDX_refresh_tokens_token" ON "refresh_tokens" ("token")`);
+      await dataSource.query(`CREATE INDEX IF NOT EXISTS "IDX_refresh_tokens_user_id" ON "refresh_tokens" ("userId")`);
+      await dataSource.query(`CREATE INDEX IF NOT EXISTS "IDX_refresh_tokens_expires_at" ON "refresh_tokens" ("expiresAt")`);
+      await dataSource.query(`CREATE INDEX IF NOT EXISTS "IDX_refresh_tokens_is_revoked" ON "refresh_tokens" ("isRevoked")`);
+      
+      console.log('Tables and indexes created successfully.');
     }
+    
+    console.log('Migration process completed successfully.');
   } catch (error) {
     console.error('Error running migrations:', error);
+    process.exit(1);
   } finally {
     // Close connection
     if (dataSource.isInitialized) {
@@ -67,5 +102,11 @@ async function runMigrations() {
 }
 
 runMigrations()
-  .then(() => console.log('Migration process completed.'))
-  .catch(error => console.error('Unhandled error:', error)); 
+  .then(() => {
+    console.log('Migration process finished.');
+    process.exit(0);
+  })
+  .catch(error => {
+    console.error('Unhandled error:', error);
+    process.exit(1);
+  }); 
