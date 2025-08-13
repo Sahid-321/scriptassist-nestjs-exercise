@@ -28,9 +28,19 @@ export class CreateTaskHandler implements ICommandHandler<CreateTaskCommand> {
 
   async execute(command: CreateTaskCommand): Promise<Task> {
     return this.transactionManager.execute(async (uow) => {
+      // Require dueDate as ISO string, always parse to Date
+      const { dueDate, ...rest } = command.taskData;
+      if (!dueDate) {
+        throw new Error('dueDate is required and must be a valid ISO 8601 string.');
+      }
+      const parsedDueDate = new Date(dueDate);
+      if (isNaN(parsedDueDate.getTime())) {
+        throw new Error('Invalid dueDate format. Must be ISO 8601 string.');
+      }
       const task = await this.taskRepository.create({
-        ...command.taskData,
+        ...rest,
         userId: command.userId,
+        dueDate: parsedDueDate,
       });
 
       const event = new TaskCreatedEvent(

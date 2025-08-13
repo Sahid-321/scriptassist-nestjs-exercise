@@ -50,7 +50,7 @@ async function runMigrations() {
           "description" text,
           "status" varchar NOT NULL DEFAULT 'PENDING',
           "priority" varchar NOT NULL DEFAULT 'MEDIUM',
-          "due_date" TIMESTAMP,
+          "due_date" TIMESTAMP NOT NULL,
           "user_id" uuid NOT NULL,
           "created_at" TIMESTAMP NOT NULL DEFAULT now(),
           "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
