@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import CircuitBreaker from 'opossum';
-type CBOptions = ConstructorParameters<typeof CircuitBreaker>[1];
+
+import CircuitBreakerDefault from 'opossum';
+type CBOptions = ConstructorParameters<typeof CircuitBreakerDefault>[1];
 
 /**
  * A generic circuit breaker service for protecting external calls.
@@ -9,7 +10,9 @@ type CBOptions = ConstructorParameters<typeof CircuitBreaker>[1];
 @Injectable()
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
-  private breakers = new Map<string, InstanceType<typeof CircuitBreaker>>();
+  private breakers = new Map<string, any>();
+  // For testability: allow override in tests
+  static CircuitBreakerClass: any = CircuitBreakerDefault;
 
   /**
    * Get or create a circuit breaker for a given key and options.
@@ -21,11 +24,12 @@ export class CircuitBreakerService {
     key: string,
     action: (...args: TArgs) => Promise<TResult>,
     options?: Partial<CBOptions>
-  ): InstanceType<typeof CircuitBreaker> {
+  ): any {
     if (this.breakers.has(key)) {
-      return this.breakers.get(key) as InstanceType<typeof CircuitBreaker>;
+      return this.breakers.get(key);
     }
-    const breaker = new CircuitBreaker(action, {
+    const BreakerClass = (this.constructor as typeof CircuitBreakerService).CircuitBreakerClass;
+    const breaker = new BreakerClass(action, {
       timeout: 10000,
       errorThresholdPercentage: 50,
       resetTimeout: 30000,
