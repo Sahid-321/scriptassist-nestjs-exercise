@@ -1,4 +1,9 @@
 import { Controller, Get } from '@nestjs/common';
+import { Response } from 'express';
+import { Res } from '@nestjs/common';
+import * as client from 'prom-client';
+// Register default Prometheus metrics (only once)
+client.collectDefaultMetrics();
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { HealthService } from '../services/health.service';
 
@@ -28,5 +33,13 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Metrics retrieved successfully' })
   async getMetrics() {
     return this.healthService.getMetrics();
+  }
+
+  @Get('metrics/prometheus')
+  @ApiOperation({ summary: 'Prometheus metrics' })
+  @ApiResponse({ status: 200, description: 'Prometheus metrics' })
+  async getPrometheusMetrics(@Res() res: Response) {
+    res.set('Content-Type', client.register.contentType);
+    res.send(await client.register.metrics());
   }
 }
